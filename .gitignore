@@ -1,0 +1,5 @@
+runtime/
+k6
+k6.tar.gz
+*.private.*
+results/

@@ -1,0 +1,46 @@
+name: Four cloud nodes - Bee load validation
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Encrypted fixture identifier
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: bee-load-acceptance
+  cancel-in-progress: false
+jobs:
+  load:
+    name: Cloud node ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install official open source k6
+        run: |
+          curl --fail --location --retry 3 https://github.com/grafana/k6/releases/download/v2.3.0/k6-v2.3.0-linux-amd64.tar.gz -o k6.tar.gz
+          echo '39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1  k6.tar.gz' | sha256sum --check --strict
+          tar -xzf k6.tar.gz --strip-components=1 k6-v2.3.0-linux-amd64/k6
+      - name: Run cloud shard
+        env:
+          BUNDLE_KEY: ${{ secrets.TEST_BUNDLE_KEY }}
+          TEST_SCOPE: ${{ inputs.scope }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: node scripts/run.mjs
+      - name: Save encrypted evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: results-${{ inputs.scope }}-node-${{ matrix.shard }}
+          path: runtime/results.enc.json
+          retention-days: 1
+          if-no-files-found: error
