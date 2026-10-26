@@ -37,7 +37,8 @@ export async function controller(){
   while(Date.now()<until){snapshot=await host();if(hostReady&&snapshot.total===f.players&&snapshot.connectedPlayers===f.players){all=true;break}await delay(1000)}
   required(all,'800-or-requested players connected before start');
   const initialNetwork=await host(null,'/network');console.log(JSON.stringify({event:'network_initial',players:initialNetwork.players,uniqueSources:initialNetwork.uniqueSources,sources:initialNetwork.sources}));
-  required(initialNetwork.players===f.players&&initialNetwork.uniqueSources===4&&initialNetwork.sources.length===4&&initialNetwork.sources.every(s=>s.players===f.players/4),'four independent sources with equal player counts recorded');
+  const sourceCounts={};for(const source of initialNetwork.sources)sourceCounts[source.source]=(sourceCounts[source.source]||0)+source.players;
+  required(initialNetwork.players===f.players&&initialNetwork.uniqueSources===4&&Object.keys(sourceCounts).length===4&&Object.values(sourceCounts).every(count=>count===f.players/4),'four independent sources with equal player counts recorded');
   snapshot=await host({action:'start',round:1});const room=snapshot.room;
   required(room.endsAt-room.startsAt===f.duration*1000,'exact requested duration');console.log(JSON.stringify({event:'match_started',room:f.code,players:f.players,startsAt:room.startsAt,endsAt:room.endsAt}));
   while(Date.now()<room.endsAt+2500)await delay(500);
