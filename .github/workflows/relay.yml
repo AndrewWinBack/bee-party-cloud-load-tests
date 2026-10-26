@@ -1,0 +1,23 @@
+name: Relay encrypted results through GitHub
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Completed load run ID
+        required: true
+        type: string
+permissions:
+  actions: read
+  contents: write
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: node scripts/relay-results.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
