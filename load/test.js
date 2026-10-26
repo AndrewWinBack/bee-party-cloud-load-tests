@@ -70,7 +70,7 @@ export async function players(){
   joinMs.add(Date.now()-start);if(response.status!==200){gameErrors.add(true);console.error(JSON.stringify({event:'join_failed',index,status:response.status}));continue}joined.add(1);startPlayer(index,response.json().key);
  }
 }
-function playerGroup(key){let n=2166136261;for(let i=0;i<key.length;i++)n=Math.imul(n^key.charCodeAt(i),16777619);return (n>>>0)%16}
+function playerGroup(key){let n=2166136261;for(let i=0;i<key.length;i++)n=Math.imul(n^key.charCodeAt(i),16777619);return (n>>>0)%(key.startsWith('g64:')?64:16)}
 function startPlayer(index,key){
  const profile=index%f.profiles;
  let room,ws,beat,timer,retry,done=false,ready=false,roundStart=0,offset=0,seq=0,localSeq=0,localParts=[],queue=[],pending=null,retryAfter=0,plannedDone=false,recoverAt=0,finalSeen=false,lastSnapshot=0,lastMessage=0,errorsLogged=0,requestSequence=0,rttMean=0,rttDeviation=0,requestTimeout=5000,failures=0;
