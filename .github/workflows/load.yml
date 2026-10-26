@@ -33,6 +33,7 @@ jobs:
       - name: Run cloud shard
         env:
           BUNDLE_KEY: ${{ secrets.TEST_BUNDLE_KEY }}
+          TEST_CONTROLLERS: ${{ secrets.TEST_CONTROLLERS }}
           TEST_SCOPE: ${{ inputs.scope }}
           SHARD_INDEX: ${{ matrix.shard }}
         run: node scripts/run.mjs

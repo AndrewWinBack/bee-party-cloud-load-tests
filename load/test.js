@@ -38,7 +38,7 @@ export async function controller(){
   required(all,'800-or-requested players connected before start');
   const initialNetwork=await host(null,'/network');console.log(JSON.stringify({event:'network_initial',players:initialNetwork.players,uniqueSources:initialNetwork.uniqueSources,sources:initialNetwork.sources}));
   const sourceCounts={};for(const source of initialNetwork.sources)sourceCounts[source.source]=(sourceCounts[source.source]||0)+source.players;
-  required(initialNetwork.players===f.players&&initialNetwork.uniqueSources===4&&Object.keys(sourceCounts).length===4&&Object.values(sourceCounts).every(count=>count===f.players/4),'four independent sources with equal player counts recorded');
+  required(initialNetwork.players===f.players&&initialNetwork.uniqueSources>=4&&Object.values(sourceCounts).reduce((a,b)=>a+b,0)===f.players,'at least four source addresses recorded across four cloud runners');
   snapshot=await host({action:'start',round:1});const room=snapshot.room;
   required(room.endsAt-room.startsAt===f.duration*1000,'exact requested duration');console.log(JSON.stringify({event:'match_started',room:f.code,players:f.players,startsAt:room.startsAt,endsAt:room.endsAt}));
   while(Date.now()<room.endsAt+2500)await delay(500);

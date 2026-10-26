@@ -10,6 +10,7 @@ assert.match(process.env.BUNDLE_KEY||'',/^[a-f0-9]{64}$/);
 const key=Buffer.from(process.env.BUNDLE_KEY,'hex'),blob=JSON.parse(readFileSync('bundles/'+scope+'.json','utf8'));
 const d=createDecipheriv('aes-256-gcm',key,Buffer.from(blob.iv,'hex'));d.setAuthTag(Buffer.from(blob.tag,'hex'));
 const bundle=JSON.parse(Buffer.concat([d.update(Buffer.from(blob.data,'base64')),d.final()]));
+if(!bundle.controller){const controllers=JSON.parse(process.env.TEST_CONTROLLERS||'{}');bundle.controller=controllers[scope];assert.ok(bundle.controller,'Missing private staging controller secret');}
 assert.equal(bundle.fixture.base,'https://bee-party-auth-staging.blue-pond-9237.workers.dev');
 assert.ok(bundle.fixture.players>=4&&bundle.fixture.players<=800&&bundle.fixture.players%4===0);
 assert.ok([60,180].includes(bundle.fixture.duration));
@@ -19,7 +20,7 @@ writeFileSync('runtime/fixture.json',JSON.stringify(bundle.fixture),{mode:0o600}
 writeFileSync('runtime/sequence.json',JSON.stringify(bundle.records),{mode:0o600});
 const health=await (await fetch(bundle.fixture.base+'/api/health')).json();assert.equal(health.version,bundle.fixture.version);assert.equal(health.environment,'staging');
 const startedAt=new Date().toISOString();
-const env={...process.env};delete env.BUNDLE_KEY;
+const env={...process.env};delete env.BUNDLE_KEY;delete env.TEST_CONTROLLERS;
 if(shard===0){env.TEST_HOST_KEY=bundle.controller.hostKey;env.TEST_ADMIN_COOKIE=bundle.controller.adminCookie;env.TEST_ADMIN_CSRF=bundle.controller.adminCsrf;}
 const child=spawn('./k6',['run','--out','json=runtime/points.gz','load/test.js'],{env,stdio:['ignore','pipe','pipe']});
 let log='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{log+=b.toString()});
