@@ -18,7 +18,7 @@ for(const secret of [bundle.controller.hostKey,bundle.controller.adminCookie,bun
 mkdirSync('runtime',{recursive:true});
 writeFileSync('runtime/fixture.json',JSON.stringify(bundle.fixture),{mode:0o600});
 writeFileSync('runtime/sequence.json',JSON.stringify(bundle.records),{mode:0o600});
-const health=await (await fetch(bundle.fixture.base+'/api/health')).json();assert.equal(health.version,bundle.fixture.version);assert.equal(health.environment,'staging');
+const health=await (await fetch(bundle.fixture.base+'/api/health')).json();assert.equal(health.version,bundle.fixture.version);assert.equal(health.environment,'staging');if(bundle.fixture.groups)assert.equal(health.playerGroups,bundle.fixture.groups);
 const startedAt=new Date().toISOString();
 const env={...process.env};delete env.BUNDLE_KEY;delete env.TEST_CONTROLLERS;
 if(shard===0){env.TEST_HOST_KEY=bundle.controller.hostKey;env.TEST_ADMIN_COOKIE=bundle.controller.adminCookie;env.TEST_ADMIN_CSRF=bundle.controller.adminCsrf;}
