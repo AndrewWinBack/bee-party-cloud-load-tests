@@ -47,7 +47,7 @@ export async function controller(){
   const rankOK=ranks.every((p,i)=>!i?p.rank===1:((ranks[i-1].score>p.score||ranks[i-1].score===p.score&&ranks[i-1].kills>=p.kills)&&p.rank===(ranks[i-1].score===p.score&&ranks[i-1].kills===p.kills?ranks[i-1].rank:i+1)));
   required(rankOK,'complete ranking and tied ranks correct');required(hostSnapshots>0&&hostBoardPlayers===f.players,'host receives complete leaderboard');
   const history=await host(null,'/history?round=1');required(history.players.length===ranks.length&&history.players.every((p,i)=>['id','name','score','kills','seq','alive','rank'].every(k=>p[k]===ranks[i][k])),'persisted history equals final leaderboard');
-  const network=await host(null,'/network');console.log(JSON.stringify({event:'network_final',players:network.players,uniqueSources:network.uniqueSources,sources:network.sources,events:network.events,commitTiming:network.commitTiming,boot:network.boot,diagnosticCount:network.diagnostics.length}));
+  const network=await host(null,'/network');console.log(JSON.stringify({event:'network_final',players:network.players,uniqueSources:network.uniqueSources,sources:network.sources,events:network.events,commitTiming:network.commitTiming,boot:network.boot,diagnosticCount:network.diagnostics.length,scoreRejectSamples:network.scoreRejectSamples}));
   console.log(JSON.stringify({event:'cloud_verification',ok:true,room:f.code,players:f.players,verifiedMatchSeconds:(room.endsAt-room.startsAt)/1000,hostSnapshots,hostBoardPlayers,allScoresVerified:true,rankingVerified:rankOK,historyVerified:true,totalTicks:ranks.reduce((n,p)=>n+p.seq,0),minTicks:Math.min(...ranks.map(p=>p.seq)),maxTicks:Math.max(...ranks.map(p=>p.seq)),scoreSum:ranks.reduce((n,p)=>n+p.score,0),kills:ranks.reduce((n,p)=>n+p.kills,0)}));
  }catch(e){console.error(JSON.stringify({event:'cloud_control_failed',message:e.message}));exec.test.abort('Cloud controller validation failed')}
  finally{stop=true;clearInterval(beat);clearTimeout(retry);socket?.close(1000)}
@@ -75,7 +75,7 @@ function startPlayer(index,key){
  const profile=index%f.profiles;
  let room,ws,beat,timer,retry,done=false,ready=false,roundStart=0,offset=0,seq=0,localSeq=0,localParts=[],queue=[],pending=null,retryAfter=0,plannedDone=false,recoverAt=0,finalSeen=false,lastSnapshot=0,lastMessage=0,errorsLogged=0,requestSequence=0,rttMean=0,rttDeviation=0,requestTimeout=5000,failures=0;
  const deadline=setTimeout(()=>{done=true;clearInterval(timer);clearInterval(beat);clearTimeout(retry);ws?.close(1000)},runSeconds*1000-6000);
- function errorLog(event,detail){if(errorsLogged++<4)console.warn(JSON.stringify({event,index,...detail}))}
+ function errorLog(event,detail){if(errorsLogged++<4)console.warn(JSON.stringify({event,index,group:playerGroup(key),...detail}))}
  function connect(){
   if(done)return;const opened=Date.now(),c=new WebSocket(wsURL+'?group='+playerGroup(key));ws=c;let intentional=false;ready=false;lastMessage=opened;
   c.onopen=()=>c.send(JSON.stringify({type:'auth',role:'player',key,protocol:3}));
@@ -101,13 +101,14 @@ function startPlayer(index,key){
     }
    }
    if(m.type==='ack'&&pending&&m.requestId===pending.id){
+    if(now-pending.at>1000&&m.diagnostic)console.warn(JSON.stringify({event:'slow_ack',index,group:playerGroup(key),requestId:pending.id,seq:pending.seq,elapsed:now-pending.at,handlerMs:m.serverNow-m.diagnostic.receivedAt,transportAndOutputMs:now-pending.at-(m.serverNow-m.diagnostic.receivedAt)}));
     const expected=record(profile,m.game.seq);scoreMatches.add(expected?.s===m.game.score&&expected?.k===m.game.kills&&m.game.seq===pending.seq);ackMs.add(now-pending.at);const sample=Math.max(1,now-pending.at);if(!rttMean){rttMean=sample;rttDeviation=sample/2}else{rttDeviation=.75*rttDeviation+.25*Math.abs(rttMean-sample);rttMean=.875*rttMean+.125*sample}requestTimeout=Math.max(1500,Math.min(5000,rttMean+4*rttDeviation+500));endToEndMs.add(now-pending.enqueuedAt);gameErrors.add(false);ticks.add(m.game.seq-seq);updates.add(1);if(pending.type==='score')scoreUpdates.add(1);else checkpoints.add(1);if(m.duplicate)duplicates.add(1);seq=m.game.seq;queue.shift();pending=null;failures=0;retryAfter=now+120;
    }
    if(m.type==='error'){
     if(m.requestId==='late'){lateCount.add(1);lateRejected.add(m.status===409);return}
     if(pending&&m.requestId===pending.id){
      if(m.status===409&&m.error==='本場不在計分時間'&&now+offset>=room.endsAt-1000){pending=null;return}
-     gameErrors.add(true);errorLog('game_error',{status:m.status,error:m.error,seq});pending=null;failures++;retryAfter=now+Math.min(1500,250*2**(failures-1));if(m.status===400||m.status===409||failures>=3)c.send(JSON.stringify({type:'sync'}));
+     gameErrors.add(true);errorLog('game_error',{status:m.status,error:m.error,seq,diagnostic:m.diagnostic,clientOffset:offset});pending=null;failures++;retryAfter=now+Math.min(1500,250*2**(failures-1));if(m.status===400||m.status===409||failures>=3)c.send(JSON.stringify({type:'sync'}));
     }
    }
   };
@@ -116,7 +117,7 @@ function startPlayer(index,key){
   function play(){
    const now=Date.now(),serverNow=now+offset;if(done||!ready||!room||!['playing','countdown'].includes(room.status)||serverNow<room.startsAt||serverNow>=room.endsAt||c.readyState!==1)return;
    if(!plannedDone&&index%5===0&&serverNow>=room.startsAt+f.duration*500){plannedDone=true;intentional=true;recoverAt=now;plannedCount.add(1);c.close(1000,'planned five-second interruption');retry=setTimeout(connect,f.reconnectDelayMs);return}
-   if(pending&&now-pending.at>requestTimeout){timeoutCount.add(1);gameErrors.add(true);errorLog('ack_timeout',{seq,pending:pending.seq});pending=null;requestTimeout=Math.min(5000,requestTimeout*1.5);retryAfter=now+250}
+   if(pending&&now-pending.at>requestTimeout){timeoutCount.add(1);gameErrors.add(true);errorLog('ack_timeout',{seq,pending:pending.seq,requestId:pending.id,elapsed:now-pending.at,timeout:requestTimeout,lastMessageAge:now-lastMessage});pending=null;requestTimeout=Math.min(5000,requestTimeout*1.5);retryAfter=now+250}
    pump();if(localSeq-seq>=60||localSeq+1>Math.floor((serverNow-room.startsAt)/50))return;
    const next=record(profile,localSeq+1);if(!next)return;localSeq++;localParts.push([next.a]);
    if(localParts.length===10){const from=localSeq-10,prev=record(profile,from),type=next.s>prev.s?'score':'checkpoint';queue.push({type,fromSeq:from,seq:localSeq,pieces:localParts,enqueuedAt:now});localParts=[];pump()}
