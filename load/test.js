@@ -47,7 +47,7 @@ export async function controller(){
   const rankOK=ranks.every((p,i)=>!i?p.rank===1:((ranks[i-1].score>p.score||ranks[i-1].score===p.score&&ranks[i-1].kills>=p.kills)&&p.rank===(ranks[i-1].score===p.score&&ranks[i-1].kills===p.kills?ranks[i-1].rank:i+1)));
   required(rankOK,'complete ranking and tied ranks correct');required(hostSnapshots>0&&hostBoardPlayers===f.players,'host receives complete leaderboard');
   const history=await host(null,'/history?round=1');required(history.players.length===ranks.length&&history.players.every((p,i)=>['id','name','score','kills','seq','alive','rank'].every(k=>p[k]===ranks[i][k])),'persisted history equals final leaderboard');
-  const network=await host(null,'/network');console.log(JSON.stringify({event:'network_final',players:network.players,uniqueSources:network.uniqueSources,sources:network.sources,events:network.events,commitTiming:network.commitTiming,boot:network.boot,diagnosticCount:network.diagnostics.length,scoreRejectSamples:network.scoreRejectSamples}));
+  const network=await host(null,'/network');console.log(JSON.stringify({event:'network_final',players:network.players,uniqueSources:network.uniqueSources,sources:network.sources,events:network.events,commitTiming:network.commitTiming,boot:network.boot,diagnosticCount:network.diagnostics.length,scoreRejectSamples:network.scoreRejectSamples,durableCommitSamples:network.durableCommitSamples}));
   console.log(JSON.stringify({event:'cloud_verification',ok:true,room:f.code,players:f.players,verifiedMatchSeconds:(room.endsAt-room.startsAt)/1000,hostSnapshots,hostBoardPlayers,allScoresVerified:true,rankingVerified:rankOK,historyVerified:true,totalTicks:ranks.reduce((n,p)=>n+p.seq,0),minTicks:Math.min(...ranks.map(p=>p.seq)),maxTicks:Math.max(...ranks.map(p=>p.seq)),scoreSum:ranks.reduce((n,p)=>n+p.score,0),kills:ranks.reduce((n,p)=>n+p.kills,0)}));
  }catch(e){console.error(JSON.stringify({event:'cloud_control_failed',message:e.message}));exec.test.abort('Cloud controller validation failed')}
  finally{stop=true;clearInterval(beat);clearTimeout(retry);socket?.close(1000)}
@@ -74,6 +74,7 @@ function playerGroup(key){let n=2166136261;for(let i=0;i<key.length;i++)n=Math.i
 function startPlayer(index,key){
  const profile=index%f.profiles;
  let room,ws,beat,timer,retry,done=false,ready=false,roundStart=0,offset=0,seq=0,localSeq=0,localParts=[],queue=[],pending=null,retryAfter=0,plannedDone=false,recoverAt=0,finalSeen=false,lastSnapshot=0,lastMessage=0,errorsLogged=0,requestSequence=0,rttMean=0,rttDeviation=0,requestTimeout=5000,failures=0;
+ const diagnosticAttempts=new Map();
  const deadline=setTimeout(()=>{done=true;clearInterval(timer);clearInterval(beat);clearTimeout(retry);ws?.close(1000)},runSeconds*1000-6000);
  function errorLog(event,detail){if(errorsLogged++<4)console.warn(JSON.stringify({event,index,group:playerGroup(key),...detail}))}
  function connect(){
@@ -100,8 +101,11 @@ function startPlayer(index,key){
      setTimeout(()=>{done=true;clearInterval(timer);clearInterval(beat);clearTimeout(deadline);c.close(1000)},1500);
     }
    }
+   if(m.type==='ack'&&diagnosticAttempts.has(m.requestId)){
+    const attempt=diagnosticAttempts.get(m.requestId);diagnosticAttempts.delete(m.requestId);
+    if(now-attempt.at>1000&&m.diagnostic)console.warn(JSON.stringify({event:pending?.id===m.requestId?'slow_ack':'late_ack',index,group:playerGroup(key),requestId:m.requestId,seq:attempt.seq,elapsed:now-attempt.at,handlerMs:m.serverNow-m.diagnostic.receivedAt,transportAndOutputMs:now-attempt.at-(m.serverNow-m.diagnostic.receivedAt)}));
+   }
    if(m.type==='ack'&&pending&&m.requestId===pending.id){
-    if(now-pending.at>1000&&m.diagnostic)console.warn(JSON.stringify({event:'slow_ack',index,group:playerGroup(key),requestId:pending.id,seq:pending.seq,elapsed:now-pending.at,handlerMs:m.serverNow-m.diagnostic.receivedAt,transportAndOutputMs:now-pending.at-(m.serverNow-m.diagnostic.receivedAt)}));
     const expected=record(profile,m.game.seq);scoreMatches.add(expected?.s===m.game.score&&expected?.k===m.game.kills&&m.game.seq===pending.seq);ackMs.add(now-pending.at);const sample=Math.max(1,now-pending.at);if(!rttMean){rttMean=sample;rttDeviation=sample/2}else{rttDeviation=.75*rttDeviation+.25*Math.abs(rttMean-sample);rttMean=.875*rttMean+.125*sample}requestTimeout=Math.max(1500,Math.min(5000,rttMean+4*rttDeviation+500));endToEndMs.add(now-pending.enqueuedAt);gameErrors.add(false);ticks.add(m.game.seq-seq);updates.add(1);if(pending.type==='score')scoreUpdates.add(1);else checkpoints.add(1);if(m.duplicate)duplicates.add(1);seq=m.game.seq;queue.shift();pending=null;failures=0;retryAfter=now+120;
    }
    if(m.type==='error'){
@@ -126,7 +130,7 @@ function startPlayer(index,key){
    const now=Date.now();if(done||!ready||pending||!queue.length||retryAfter>now||!room||now+offset>=room.endsAt||c.readyState!==1)return;
    let item=queue[0];
    if(!item.attempted)while(queue.length>1&&!queue[1].attempted&&item.seq===queue[1].fromSeq&&item.pieces.length+queue[1].pieces.length<=30){const next=queue[1];item={...item,type:item.type==='score'||next.type==='score'?'score':'checkpoint',seq:next.seq,pieces:[...item.pieces,...next.pieces]};queue.splice(0,2,item)}
-   item.attempted=true;const id=(++requestSequence).toString(36);pending={...item,id,at:now};c.send(JSON.stringify({type:item.type,requestId:id,round:1,fromSeq:item.fromSeq,seq:item.seq,input:item.pieces.map(p=>p[0]==='left'?'1':p[0]==='right'?'2':'0').join('')}));
+   item.attempted=true;const id=(++requestSequence).toString(36);pending={...item,id,at:now};diagnosticAttempts.set(id,{at:now,seq:item.seq});if(diagnosticAttempts.size>12)diagnosticAttempts.delete(diagnosticAttempts.keys().next().value);c.send(JSON.stringify({type:item.type,requestId:id,round:1,fromSeq:item.fromSeq,seq:item.seq,input:item.pieces.map(p=>p[0]==='left'?'1':p[0]==='right'?'2':'0').join('')}));
   }
  }
  function nowSince(at){return Date.now()-at}
