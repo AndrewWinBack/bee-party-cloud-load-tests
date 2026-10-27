@@ -13,6 +13,7 @@ for(const name of fs.readdirSync('relay')){
  const lines=createInterface({input:fs.createReadStream(dir+'/points.gz').pipe(createGunzip()),crlfDelay:Infinity});
  for await(const line of lines){const p=JSON.parse(line);if(p.type!=='Point')continue;pointCount++;const values=histograms[p.metric]??={};values[p.data.value]=(values[p.data.value]||0)+1;}
  const compact={format:'exact-value-counts-v1',pointCount,histograms,summary:JSON.parse(fs.readFileSync(dir+'/summary.json')),execution:JSON.parse(fs.readFileSync(dir+'/execution.json')),log:fs.readFileSync(dir+'/run.log','utf8')};
+ if(fs.existsSync(dir+'/transport.json'))compact.transport=JSON.parse(fs.readFileSync(dir+'/transport.json'));
  const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv),encrypted=Buffer.concat([cipher.update(gzipSync(JSON.stringify(compact))),cipher.final()]);
  const content=Buffer.from(JSON.stringify({iv:iv.toString('hex'),tag:cipher.getAuthTag().toString('hex'),data:encrypted.toString('base64')}));
  const blob=await api('/git/blobs',{encoding:'base64',content:content.toString('base64')});entries.push({path:name+'.enc.json',mode:'100644',type:'blob',sha:blob.sha});

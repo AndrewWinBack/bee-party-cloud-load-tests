@@ -1,3 +1,4 @@
+import {startTransportDiagnostics} from './transport-diagnostics.mjs';
 import {readFileSync,writeFileSync,mkdirSync,rmSync} from 'node:fs';
 import {createDecipheriv,createCipheriv,randomBytes,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
@@ -22,14 +23,16 @@ const health=await (await fetch(bundle.fixture.base+'/api/health')).json();asser
 const startedAt=new Date().toISOString();
 const env={...process.env};delete env.BUNDLE_KEY;delete env.TEST_CONTROLLERS;
 if(shard===0){env.TEST_HOST_KEY=bundle.controller.hostKey;env.TEST_ADMIN_COOKIE=bundle.controller.adminCookie;env.TEST_ADMIN_CSRF=bundle.controller.adminCsrf;}
+const stopTransport=await startTransportDiagnostics(bundle.fixture.base);
 const child=spawn('./k6',['run','--out','json=runtime/points.gz','load/test.js'],{env,stdio:['ignore','pipe','pipe']});
 let log='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{log+=b.toString()});
 console.log(JSON.stringify({event:'started',shard,players:bundle.fixture.players/4,seconds:bundle.fixture.duration,protocol:3}));
 const watchdog=setTimeout(()=>child.kill('SIGTERM'),(bundle.fixture.duration+270)*1000);
 const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)});clearTimeout(watchdog);
+const transport=await stopTransport();writeFileSync('runtime/transport.json',JSON.stringify(transport));
 writeFileSync('runtime/run.log',log,{mode:0o600});
 writeFileSync('runtime/execution.json',JSON.stringify({scope,shard,players:bundle.fixture.players/4,totalPlayers:bundle.fixture.players,seconds:bundle.fixture.duration,protocol:3,startedAt,endedAt:new Date().toISOString(),runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,runnerName:process.env.RUNNER_NAME,runnerOS:process.env.RUNNER_OS,hostnameHash:createHash('sha256').update(hostname()).digest('hex'),cpuCount:cpus().length,cpuModel:cpus()[0]?.model,memoryBytes:totalmem(),k6Version:spawnSync('./k6',['version'],{encoding:'utf8'}).stdout.trim(),exitCode:code,health,fixtureHash:createHash('sha256').update(JSON.stringify(bundle.fixture)).digest('hex'),harnessHash:createHash('sha256').update(readFileSync('load/test.js')).digest('hex')},null,2));
-const archive=spawnSync('tar',['-czf','runtime/results.tar.gz','-C','runtime','summary.json','execution.json','run.log','points.gz']);assert.equal(archive.status,0);
+const archive=spawnSync('tar',['-czf','runtime/results.tar.gz','-C','runtime','summary.json','execution.json','run.log','points.gz','transport.json']);assert.equal(archive.status,0);
 const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv),encrypted=Buffer.concat([cipher.update(readFileSync('runtime/results.tar.gz')),cipher.final()]);
 writeFileSync('runtime/results.enc.json',JSON.stringify({iv:iv.toString('hex'),tag:cipher.getAuthTag().toString('hex'),data:encrypted.toString('base64')}));
 rmSync('runtime/fixture.json');rmSync('runtime/sequence.json');
